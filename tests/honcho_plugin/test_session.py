@@ -923,16 +923,16 @@ class TestBaseContextSummary:
             "card": "Name: Eri Barrett",
         }
         formatted = provider._format_first_turn_context(ctx)
-        assert "## Session Summary" in formatted
-        assert formatted.index("Session Summary") < formatted.index("User Representation")
+        assert "## Current Session Summary" in formatted
+        assert formatted.index("Current Session Summary") < formatted.index("User Background")
 
     def test_format_without_summary(self):
         """No summary key means no summary section."""
         provider = HonchoMemoryProvider()
         ctx = {"representation": "Eri is a developer.", "card": "Name: Eri"}
         formatted = provider._format_first_turn_context(ctx)
-        assert "Session Summary" not in formatted
-        assert "User Representation" in formatted
+        assert "Current Session Summary" not in formatted
+        assert "User Background" in formatted
 
     def test_format_empty_summary_skipped(self):
         """Empty summary string should not produce a section."""
@@ -1033,7 +1033,8 @@ class TestDialecticDepth:
         provider = self._make_provider()
         prompt = provider._build_dialectic_prompt(0, [], is_cold=True)
         assert "preferences" in prompt.lower()
-        assert "session" not in prompt.lower()
+        # Cold start should focus on general user context, not session-specific work
+        assert "other sessions" in prompt.lower()
 
     def test_warm_session_prompt(self):
         """Warm session (has context) uses session-scoped query."""

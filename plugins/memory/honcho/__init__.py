@@ -469,18 +469,23 @@ class HonchoMemoryProvider(MemoryProvider):
         """Format the prefetch context dict into a readable system prompt block."""
         parts = []
 
-        # Session summary — session-scoped context, placed first for relevance
+        # Session summary — session-scoped context, placed first for relevance.
+        # Label explicitly as session-scoped so the model knows this is about
+        # the current conversation, not cross-session background.
         summary = ctx.get("summary", "")
         if summary:
-            parts.append(f"## Session Summary\n{summary}")
+            parts.append(f"## Current Session Summary (this conversation only)\n{summary}")
 
+        # User-level context below — these are synthesized across ALL sessions
+        # for this peer. Label as informational/background to prevent the model
+        # from conflating them with the current session's work.
         rep = ctx.get("representation", "")
         if rep:
-            parts.append(f"## User Representation\n{rep}")
+            parts.append(f"## User Background (cross-session, informational)\n{rep}")
 
         card = ctx.get("card", "")
         if card:
-            parts.append(f"## User Peer Card\n{card}")
+            parts.append(f"## User Facts (cross-session, informational)\n{card}")
 
         ai_rep = ctx.get("ai_representation", "")
         if ai_rep:
@@ -672,8 +677,17 @@ class HonchoMemoryProvider(MemoryProvider):
             )
             dialectic_result = ""
 
-        if dialectic_result and dialectic_result.strip():
+        # Continuation prompts ("continue where we left off", "resume", etc.)
+        # are about the CURRENT session — skip the dialectic supplement to
+        # avoid cross-session contamination.  Base context (session summary
+        # + representation) is still included — it's useful and session-scoped
+        # summary is labeled clearly.
+        _is_continuation = self._is_continuation_prompt(query)
+
+        if dialectic_result and dialectic_result.strip() and not _is_continuation:
             parts.append(dialectic_result)
+        elif _is_continuation and dialectic_result:
+            logger.debug("Honcho dialectic suppressed for continuation prompt")
 
         if not parts:
             return ""
@@ -899,12 +913,17 @@ class HonchoMemoryProvider(MemoryProvider):
                 return (
                     "Who is this person? What are their preferences, goals, "
                     "and working style? Focus on facts that would help an AI "
-                    "assistant be immediately useful."
+                    "assistant be immediately useful. "
+                    "Do NOT include details about specific ongoing tasks or "
+                    "projects from other sessions — only general user context."
                 )
             return (
                 "Given what's been discussed in this session so far, what "
                 "context about this user is most relevant to the current "
-                "conversation? Prioritize active context over biographical facts."
+                "conversation? Prioritize active context over biographical facts. "
+                "Focus ONLY on what matters for THIS session. Do NOT surface "
+                "ongoing work, tasks, or projects from other sessions unless "
+                "the user has explicitly referenced them here."
             )
         elif pass_idx == 1:
             prior = prior_results[-1] if prior_results else ""
@@ -913,7 +932,8 @@ class HonchoMemoryProvider(MemoryProvider):
                 "What gaps remain in your understanding that would help "
                 "going forward? Synthesize what you actually know about "
                 "the user's current state and immediate needs, grounded "
-                "in evidence from recent sessions."
+                "in evidence from the current session. "
+                "Do NOT pull in tasks or projects from other sessions."
             )
         else:
             # pass 2: reconciliation
@@ -923,7 +943,8 @@ class HonchoMemoryProvider(MemoryProvider):
                 f"Pass 2:\n{prior_results[1] if len(prior_results) > 1 else '(empty)'}\n\n"
                 "Do these assessments cohere? Reconcile any contradictions "
                 "and produce a final, concise synthesis of what matters most "
-                "for the current conversation."
+                "for the current conversation. Exclude any cross-session "
+                "task context that is not directly relevant to this session."
             )
 
     @staticmethod
@@ -997,6 +1018,20 @@ class HonchoMemoryProvider(MemoryProvider):
         re.IGNORECASE,
     )
 
+    # Continuation prompts — user wants to resume current session work.
+    # These should NOT trigger the dialectic (cross-session synthesis)
+    # because the user is asking about THIS session, not cross-session context.
+    _CONTINUATION_PROMPT_RE = re.compile(
+        r'(continue\s+(where|from|with)\b'
+        r'|pick\s+up\s+(where|from)\b'
+        r'|resume\s+(where|from|the|our|this)\b'
+        r'|let(?:\'?s|\s+us)\s+(continue|resume|pick\s+up)\b'
+        r'|where\s+(were|did)\s+(we|you)\s*(leave|stop|last|$)'
+        r'|what\s+were\s+we\s+(doing|working)\b'
+        r'|keep\s+(going|working)\b)',
+        re.IGNORECASE,
+    )
+
     @classmethod
     def _is_trivial_prompt(cls, text: str) -> bool:
         """Return True if the prompt is too trivial to warrant context injection."""
@@ -1010,6 +1045,18 @@ class HonchoMemoryProvider(MemoryProvider):
         if cls._TRIVIAL_PROMPT_RE.match(stripped):
             return True
         return False
+
+    @classmethod
+    def _is_continuation_prompt(cls, text: str) -> bool:
+        """Return True if the prompt is a continuation/resume request.
+
+        Continuation prompts ask about the CURRENT session's work, so the
+        dialectic (which synthesizes cross-session user context) should be
+        suppressed to avoid contaminating the response with other sessions.
+        """
+        if not text:
+            return False
+        return bool(cls._CONTINUATION_PROMPT_RE.search(text.strip()))
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
         """Track turn count for cadence and injection_frequency logic."""

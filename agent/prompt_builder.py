@@ -170,7 +170,18 @@ MEMORY_GUIDANCE = (
 SESSION_SEARCH_GUIDANCE = (
     "When the user references something from a past conversation or you suspect "
     "relevant cross-session context exists, use session_search to recall it before "
-    "asking them to repeat themselves."
+    "asking them to repeat themselves.\n"
+    "CRITICAL: Only use session_search when the user EXPLICITLY asks about something "
+    "from a previous session (e.g., 'what did we do about X last week?', 'how did we fix Y before?').\n"
+    "NEVER use session_search when the user asks about the CURRENT session's continuity, "
+    "'where we left off', or 'what were we doing' — in those cases, rely ONLY on the "
+    "conversation history already in your context. If the current session is fresh and "
+    "has no history, simply state that you have no prior context for this session and "
+    "ask what the user would like to work on. Do NOT search other sessions to guess.\n"
+    "IMPORTANT: The <memory-context> block below may include information from OTHER "
+    "sessions. Never assume it refers to the current session's work. When the user says "
+    "'continue' or 'where we left off', treat ONLY the conversation history above as "
+    "the source of truth for what was being worked on."
 )
 
 SKILLS_GUIDANCE = (
